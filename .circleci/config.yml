@@ -1,0 +1,64 @@
+version: 2.1
+
+jobs:
+  
+  payment_build:
+    docker:
+    - image: google/cloud-sdk
+    steps:
+    - checkout
+    - setup_remote_docker
+
+    - run:
+        name: Setup Google Cloud SDK
+        command: |
+          apt-get install -qq -y gettext
+          echo $GCLOUD_SERVICE_KEY > gcloud-service-key.json
+          gcloud auth activate-service-account --key-file=gcloud-service-key.json
+          ls -l
+    - run:
+        name: docker gcloud init
+        command: |
+          gcloud auth configure-docker  us-central1-docker.pkg.dev
+
+    - run:
+        name: Build and Push Payment Service
+        command: |
+          docker build -t us-central1-docker.pkg.dev/codetokloud/payment/payment:latest ./services/payment
+          docker push us-central1-docker.pkg.dev/codetokloud/payment/payment:latest
+  payment_deploy:
+    docker:
+    - image: google/cloud-sdk:latest
+    steps:
+    - checkout
+    - run:
+        name: Authenticate with GKE
+        command: |
+          echo $GCLOUD_SERVICE_KEY > gcloud-service-key.json
+          gcloud auth activate-service-account --key-file=gcloud-service-key.json
+          gcloud config set project codetokloud
+          gcloud container clusters get-credentials cluster-1 --zone us-central1
+    - run:
+        name: Install Helm
+        command: |
+          curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+
+    - run:
+        name: Deploy Payment Service
+        command: |
+          helm upgrade --install payment ./helm/payment --set image.repository=us-central1-docker.pkg.dev/codetokloud/payment/payment:latest --set image.tag=latest
+
+
+
+
+workflows:
+  version: 2
+  payment_build_and_deploy:
+    jobs:
+    - payment_build
+    - payment_deploy:
+        requires:
+        - payment_build
+        filters:
+            branches:
+              only: main
